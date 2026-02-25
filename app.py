@@ -1,6 +1,6 @@
 import os
 import sqlite3
-import pandas as pd
+import csv
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
@@ -8,18 +8,19 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Con
 TOKEN = os.getenv("TOKEN")
 
 # Criar banco
-conn = sqlite3.connect("gastos.db")
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS gastos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    data TEXT,
-    categoria TEXT,
-    valor REAL
-)
-""")
-conn.commit()
-conn.close()
+def init_db():
+    conn = sqlite3.connect("gastos.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gastos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            categoria TEXT,
+            valor REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 async def salvar_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower().split()
@@ -40,29 +41,40 @@ async def salvar_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect("gastos.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)", (data, categoria, valor))
+    cursor.execute("INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)",
+                   (data, categoria, valor))
     conn.commit()
     conn.close()
 
-    await update.message.reply_text(f"Gasto salvo: {categoria} - R${valor}")
+    await update.message.reply_text(f"✅ Gasto salvo: {categoria} - R${valor}")
 
 async def relatorio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect("gastos.db")
-    df = pd.read_sql_query("SELECT * FROM gastos", conn)
+    cursor = conn.cursor()
+    cursor.execute("SELECT data, categoria, valor FROM gastos")
+    dados = cursor.fetchall()
     conn.close()
 
-    if df.empty:
+    if not dados:
         await update.message.reply_text("Nenhum gasto registrado.")
         return
 
-    arquivo = "relatorio.xlsx"
-    df.to_excel(arquivo, index=False)
+    arquivo = "relatorio.csv"
+
+    with open(arquivo, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Data", "Categoria", "Valor"])
+        writer.writerows(dados)
 
     await update.message.reply_document(open(arquivo, "rb"))
 
-app = ApplicationBuilder().token(TOKEN).build()
+def main():
+    init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_gasto))
+    app.add_handler(CommandHandler("relatorio", relatorio))
+    print("Bot rodando...")
+    app.run_polling()
 
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_gasto))
-app.add_handler(CommandHandler("relatorio", relatorio))
-
-app.run_polling()
+if __name__ == "__main__":
+    main()
